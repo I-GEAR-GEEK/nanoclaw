@@ -124,6 +124,8 @@ function buildVolumeMounts(
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
+  // Container runs as node (UID 1000) — ensure the .claude tree is writable
+  fs.chmodSync(groupSessionsDir, 0o777);
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
     fs.writeFileSync(
@@ -171,6 +173,11 @@ function buildVolumeMounts(
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  // Container runs as node (UID 1000) — ensure IPC dirs are writable
+  for (const sub of ['messages', 'tasks', 'input']) {
+    fs.chmodSync(path.join(groupIpcDir, sub), 0o777);
+  }
+  fs.chmodSync(groupIpcDir, 0o777);
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',

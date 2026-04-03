@@ -21,14 +21,23 @@
 
 import express, { Request, Response } from 'express';
 import { google } from 'googleapis';
+import { readEnvFile } from '../env.js';
 import { registerChannel } from './registry.js';
 import type { ChannelOpts } from './registry.js';
 import type { Channel } from '../types.js';
+import { getRouterState, setRouterState } from '../db.js';
 
-const GOOGLE_CHAT_ENABLED = process.env.GOOGLE_CHAT_ENABLED === 'true';
-const SERVICE_ACCOUNT_PATH = process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_PATH || '';
-const WEBHOOK_PORT = parseInt(process.env.GOOGLE_CHAT_WEBHOOK_PORT || '3002', 10);
-const WEBHOOK_SECRET = process.env.GOOGLE_CHAT_WEBHOOK_SECRET || '';
+const envVars = readEnvFile([
+  'GOOGLE_CHAT_ENABLED',
+  'GOOGLE_CHAT_SERVICE_ACCOUNT_PATH',
+  'GOOGLE_CHAT_WEBHOOK_PORT',
+  'GOOGLE_CHAT_WEBHOOK_SECRET',
+]);
+
+const GOOGLE_CHAT_ENABLED = envVars.GOOGLE_CHAT_ENABLED === 'true';
+const SERVICE_ACCOUNT_PATH = envVars.GOOGLE_CHAT_SERVICE_ACCOUNT_PATH || '';
+const WEBHOOK_PORT = parseInt(envVars.GOOGLE_CHAT_WEBHOOK_PORT || '3002', 10);
+const WEBHOOK_SECRET = envVars.GOOGLE_CHAT_WEBHOOK_SECRET || '';
 
 const MAX_MESSAGE_LENGTH = 4096;
 
@@ -39,8 +48,16 @@ class GoogleChatChannel implements Channel {
   private connected = false;
   private chatClient: ReturnType<typeof google.chat> | null = null;
   private server: ReturnType<typeof express.application.listen> | null = null;
-  // Track the most recent thread name per space JID so replies go into the same thread
-  private lastThreadName = new Map<string, string>();
+  // Persist thread name per space JID in DB so replies survive restarts
+  private getThreadName(jid: string): string | undefined {
+    return getRouterState(`gc_thread:${jid}`);
+  }
+  private setThreadName(jid: string, threadName: string): void {
+    setRouterState(`gc_thread:${jid}`, threadName);
+  }
+  private clearThreadName(jid: string): void {
+    setRouterState(`gc_thread:${jid}`, '');
+  }
 
   constructor(opts: ChannelOpts) {
     this.opts = opts;
@@ -137,7 +154,7 @@ class GoogleChatChannel implements Channel {
     const isGroupSpace = space?.type === 'ROOM' || space?.type === 'SPACE' || space?.spaceType === 'SPACE';
 
     const threadName = message.thread?.name as string | undefined;
-    if (threadName) this.lastThreadName.set(jid, threadName);
+    if (threadName) this.setThreadName(jid, threadName);
 
     this.opts.onChatMetadata(jid, timestamp, space?.displayName || spaceName, 'google-chat', isGroupSpace);
     this.opts.onMessage(jid, {
@@ -167,7 +184,7 @@ class GoogleChatChannel implements Channel {
     const isGroupSpace = spaceObj.type === 'ROOM' || spaceObj.type === 'SPACE' || spaceObj.spaceType === 'SPACE';
 
     const threadName = message.thread?.name as string | undefined;
-    if (threadName) this.lastThreadName.set(jid, threadName);
+    if (threadName) this.setThreadName(jid, threadName);
 
     this.opts.onChatMetadata(jid, timestamp, spaceObj.displayName || spaceName, 'google-chat', isGroupSpace);
     this.opts.onMessage(jid, {
@@ -186,7 +203,7 @@ class GoogleChatChannel implements Channel {
     if (!this.chatClient) throw new Error('[google-chat] Not connected');
 
     const parent = jid.replace('gc:', '');
-    const threadName = this.lastThreadName.get(jid);
+    const threadName = this.getThreadName(jid) || undefined;
 
     const chunks: string[] = [];
     for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
@@ -198,16 +215,31 @@ class GoogleChatChannel implements Channel {
       if (threadName) {
         requestBody.thread = { name: threadName };
       }
-      await this.chatClient.spaces.messages.create({
-        parent,
-        ...(threadName && { messageReplyOption: 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD' }),
-        requestBody,
-      });
+      try {
+        await this.chatClient.spaces.messages.create({
+          parent,
+          ...(threadName && { messageReplyOption: 'REPLY_MESSAGE_OR_FAIL' }),
+          requestBody,
+        });
+      } catch (err: any) {
+        // Thread no longer exists — send without thread context
+        if (threadName && err?.code === 404) {
+          this.clearThreadName(jid);
+          delete requestBody.thread;
+          await this.chatClient.spaces.messages.create({
+            parent,
+            requestBody,
+          });
+        } else {
+          throw err;
+        }
+      }
     }
   }
 
   async setTyping(_jid: string, _isTyping: boolean): Promise<void> {
-    // Google Chat does not support typing indicators via API
+    // Google Chat does not support typing indicators and deleting
+    // placeholder messages leaves a "Message deleted" tombstone.
   }
 
   isConnected(): boolean {

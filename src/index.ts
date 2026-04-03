@@ -33,6 +33,7 @@ import {
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
+  clearAllSessions,
   deleteSession,
   getAllTasks,
   getLastBotMessageTimestamp,
@@ -370,10 +371,12 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
-  // Wrap onOutput to track session ID from streamed results
+  // Wrap onOutput to track session ID from streamed results.
+  // Only persist session IDs from successful outputs — error responses may
+  // echo back a stale session ID that no longer exists on the server.
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
-        if (output.newSessionId) {
+        if (output.newSessionId && output.status !== 'error') {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
         }
@@ -397,7 +400,7 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    if (output.newSessionId) {
+    if (output.newSessionId && output.status !== 'error') {
       sessions[group.folder] = output.newSessionId;
       setSession(group.folder, output.newSessionId);
     }
@@ -568,6 +571,9 @@ function ensureContainerSystemRunning(): void {
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
+  // Sessions don't survive process restarts — the Claude Code backend
+  // invalidates them. Clear upfront to avoid stale-session retry loops.
+  clearAllSessions();
   logger.info('Database initialized');
   loadState();
 
