@@ -97,7 +97,9 @@ class GoogleChatChannel implements Channel {
 
     await new Promise<void>((resolve) => {
       this.server = app.listen(WEBHOOK_PORT, () => {
-        console.log(`[google-chat] Webhook server listening on port ${WEBHOOK_PORT}`);
+        console.log(
+          `[google-chat] Webhook server listening on port ${WEBHOOK_PORT}`,
+        );
         resolve();
       });
     });
@@ -109,7 +111,10 @@ class GoogleChatChannel implements Channel {
   private async handleEvent(event: any): Promise<void> {
     // --- Format 1: Google Workspace Add-on format (event.chat.messagePayload) ---
     if (event.chat?.messagePayload) {
-      await this.handleAddonMessage(event.chat.messagePayload, event.chat.eventTime);
+      await this.handleAddonMessage(
+        event.chat.messagePayload,
+        event.chat.eventTime,
+      );
       return;
     }
 
@@ -123,22 +128,39 @@ class GoogleChatChannel implements Channel {
     if (event.chat && !event.chat.messagePayload && event.chat.eventTime) {
       const space = event.chat.space || { name: '', displayName: 'Unknown' };
       const jid = `gc:${space.name}`;
-      console.log(`[google-chat] Added to space: ${space.displayName || space.name} (${jid})`);
-      this.opts.onChatMetadata(jid, new Date().toISOString(), space.displayName || space.name, 'google-chat',
-        space.type === 'ROOM' || space.type === 'SPACE');
+      console.log(
+        `[google-chat] Added to space: ${space.displayName || space.name} (${jid})`,
+      );
+      this.opts.onChatMetadata(
+        jid,
+        new Date().toISOString(),
+        space.displayName || space.name,
+        'google-chat',
+        space.type === 'ROOM' || space.type === 'SPACE',
+      );
       return;
     }
 
     // --- Bot added to space (regular Chat app format) ---
     if (event.type === 'ADDED_TO_SPACE' && event.space) {
       const jid = `gc:${event.space.name}`;
-      console.log(`[google-chat] Added to space: ${event.space.displayName || event.space.name} (${jid})`);
-      this.opts.onChatMetadata(jid, new Date().toISOString(), event.space.displayName || event.space.name, 'google-chat',
-        event.space.type === 'ROOM' || event.space.type === 'SPACE');
+      console.log(
+        `[google-chat] Added to space: ${event.space.displayName || event.space.name} (${jid})`,
+      );
+      this.opts.onChatMetadata(
+        jid,
+        new Date().toISOString(),
+        event.space.displayName || event.space.name,
+        'google-chat',
+        event.space.type === 'ROOM' || event.space.type === 'SPACE',
+      );
     }
   }
 
-  private async handleAddonMessage(payload: any, eventTime?: string): Promise<void> {
+  private async handleAddonMessage(
+    payload: any,
+    eventTime?: string,
+  ): Promise<void> {
     const message = payload.message;
     const space = payload.space;
     if (!message || message.sender?.type === 'BOT') return;
@@ -148,15 +170,25 @@ class GoogleChatChannel implements Channel {
     const senderId = message.sender?.name || 'unknown';
     const senderName = message.sender?.displayName || senderId;
     // argumentText strips the @mention prefix; fall back to full text for non-mention events
-    const text = (message.argumentText || message.text || '').trim();
+    const text = (message.text || message.argumentText || '').trim(); // use full text to preserve @mention for trigger check
     if (!text) return;
-    const timestamp = message.createTime || eventTime || new Date().toISOString();
-    const isGroupSpace = space?.type === 'ROOM' || space?.type === 'SPACE' || space?.spaceType === 'SPACE';
+    const timestamp =
+      message.createTime || eventTime || new Date().toISOString();
+    const isGroupSpace =
+      space?.type === 'ROOM' ||
+      space?.type === 'SPACE' ||
+      space?.spaceType === 'SPACE';
 
     const threadName = message.thread?.name as string | undefined;
     if (threadName) this.setThreadName(jid, threadName);
 
-    this.opts.onChatMetadata(jid, timestamp, space?.displayName || spaceName, 'google-chat', isGroupSpace);
+    this.opts.onChatMetadata(
+      jid,
+      timestamp,
+      space?.displayName || spaceName,
+      'google-chat',
+      isGroupSpace,
+    );
     this.opts.onMessage(jid, {
       id: message.name || `gc_${Date.now()}`,
       chat_jid: jid,
@@ -181,12 +213,21 @@ class GoogleChatChannel implements Channel {
     if (!text) return;
     const timestamp = message.createTime || new Date().toISOString();
     const spaceObj = space || message.space || {};
-    const isGroupSpace = spaceObj.type === 'ROOM' || spaceObj.type === 'SPACE' || spaceObj.spaceType === 'SPACE';
+    const isGroupSpace =
+      spaceObj.type === 'ROOM' ||
+      spaceObj.type === 'SPACE' ||
+      spaceObj.spaceType === 'SPACE';
 
     const threadName = message.thread?.name as string | undefined;
     if (threadName) this.setThreadName(jid, threadName);
 
-    this.opts.onChatMetadata(jid, timestamp, spaceObj.displayName || spaceName, 'google-chat', isGroupSpace);
+    this.opts.onChatMetadata(
+      jid,
+      timestamp,
+      spaceObj.displayName || spaceName,
+      'google-chat',
+      isGroupSpace,
+    );
     this.opts.onMessage(jid, {
       id: message.name || `gc_${Date.now()}`,
       chat_jid: jid,
@@ -266,7 +307,9 @@ registerChannel('google-chat', (opts: ChannelOpts) => {
     return null;
   }
   if (!SERVICE_ACCOUNT_PATH) {
-    console.log('[google-chat] Disabled (GOOGLE_CHAT_SERVICE_ACCOUNT_PATH not set)');
+    console.log(
+      '[google-chat] Disabled (GOOGLE_CHAT_SERVICE_ACCOUNT_PATH not set)',
+    );
     return null;
   }
   return new GoogleChatChannel(opts);
